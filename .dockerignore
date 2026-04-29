@@ -1,0 +1,23 @@
+# Exclude Windows-compiled vendored packages — these are platform-specific
+# binaries that break on Linux. All dependencies are installed via pip from
+# requirements.txt instead.
+backend/packages/
+
+# Node modules (installed during frontend build stage)
+frontend/node_modules/
+node_modules/
+
+# Python cache
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Environment files
+.env
+.env.*
+**/.env
+
+# Development artifacts
+.vscode/
+.idea/
+**/.DS_Store
