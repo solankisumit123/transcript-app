@@ -28,6 +28,7 @@ dnspython==2.8.0
 ecdsa==0.19.2
 email-validator==2.3.0
 
+fakeredis==2.35.1
 fastapi==0.110.1
 faster-whisper==1.2.1
 fastuuid==0.14.0

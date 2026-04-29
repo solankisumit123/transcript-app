@@ -1,15 +1,6 @@
 """Celery + Redis configuration."""
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-# Add local 'packages' directory to sys.path to support bundled dependencies
-_root = Path(__file__).parent
-_packages_dir = _root / "packages"
-if _packages_dir.exists() and str(_packages_dir) not in sys.path:
-    sys.path.insert(0, str(_packages_dir))
-
 import os
 from pathlib import Path
 from dotenv import load_dotenv
