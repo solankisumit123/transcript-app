@@ -780,54 +780,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import os
 
-@api_router.get("/metrics/json")
-async def metrics_json():
-    summary: Dict[str, Any] = {}
-    for route, samples in _lite_metrics["latency_ms_recent"].items():
-        if not samples:
-            continue
-        srt = sorted(samples)
-        n = len(srt)
-        summary[route] = {
-            "count": n,
-            "p50_ms": round(srt[n // 2], 1),
-            "p95_ms": round(srt[min(n - 1, int(n * 0.95))], 1),
-            "p99_ms": round(srt[min(n - 1, int(n * 0.99))], 1),
-            "max_ms": round(srt[-1], 1),
-            "errors": _lite_metrics["requests_errors"].get(route, 0),
-        }
-    requests_breakdown: Dict[str, int] = {}
-    for (method, route, status), count in _lite_metrics["requests_total"].items():
-        requests_breakdown[f"{method} {route} {status}"] = count
-    return {
-        "uptime_sec": int(time.time() - _lite_metrics["started_at"]),
-        "routes": summary,
-        "requests": requests_breakdown,
-    }
-
-
-@app.get("/metrics")
-async def prometheus_metrics_root():
-    """Cluster-internal Prometheus scraping endpoint (root, not under /api)."""
-    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
-
-
-@api_router.get("/metrics")
-async def prometheus_metrics_api():
-    """Same as /metrics but mounted under /api so it's reachable through public ingress."""
-    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
-
-
-# ---------------------------------------------------------------------------
-# Mount + middleware
-# ---------------------------------------------------------------------------
-app.include_router(api_router)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Serve static frontend files if the build directory exists
+frontend_path = Path(__file__).parent / "frontend_build"
+if frontend_path.exists() and frontend_path.is_dir():
+    app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
+    
+    @app.exception_handler(404)
+    async def custom_404_handler(request, exc):
+        # Always return index.html for unknown routes to allow React Router to handle it
+        if not request.url.path.startswith("/api/"):
+            return FileResponse(frontend_path / "index.html")
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
