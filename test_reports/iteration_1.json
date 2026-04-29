@@ -1,0 +1,54 @@
+{
+  "summary": "Executed full backend pytest suite (13/13 passed) and full Playwright E2E flow (extract → tabs → summary → translate → copy → pricing → tools → footer). All core requested behaviors verified end-to-end against public REACT_APP_BACKEND_URL. Found 2 frontend issues: uncaught clipboard error and React hydration warning in translate dropdown.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "TranscriptViewer (copy-all-btn handler)",
+        "issue": "navigator.clipboard.writeText() throws in headless/non-secure contexts, the error is NOT caught and surfaces as 'Uncaught runtime error: NotAllowedError: Failed to execute writeText on Clipboard: Write permission denied.' The React dev overlay shows this as a fatal error (see screenshot 04). Functionally the click does not crash the React tree but it does fire a window-level pageerror event, which the test spec explicitly says should NOT happen.",
+        "selector": "[data-testid='copy-all-btn']",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "TranscriptViewer (translate-language-select)",
+        "issue": "Console hydration error: 'In HTML, <span> cannot be a child of <option>'. The <option> children are split into multiple text fragments at TranscriptViewer.js:287 which the renderer wraps in <span>, producing an invalid DOM tree and a recurring console error during the translate flow.",
+        "selector": "[data-testid='translate-language-select'] option",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_yt_transcript_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Wrap the copy-all-btn handler's navigator.clipboard.writeText(...) in try/catch (and optionally fall back to a hidden textarea + document.execCommand('copy')) so the error never reaches window.onerror.",
+    "Fix TranscriptViewer.js line ~287: render the <option> label as a single concatenated string instead of multiple JSX children (e.g. {`[${l.code.toUpperCase()}] ${l.name.toUpperCase()}`}) so React/instrumentation does not inject a <span> child."
+  ],
+  "critical_code_review_comments": [
+    "server.py uses deprecated FastAPI @app.on_event('shutdown') – consider lifespan handler.",
+    "server.py extract_transcript: pytube title fetch is synchronous and can block the event loop; should be wrapped in asyncio.to_thread or removed.",
+    "server.py translate endpoint truncates input to 30k chars without warning the caller – consider returning a 'truncated: true' flag.",
+    "server.py /api/jobs returns objects with full ObjectId-free dicts (good, _id excluded via projection). No issue.",
+    "summarize endpoint: chapters/key_points lists are silently truncated to 8/12 — acceptable but undocumented.",
+    "Frontend: console hydration error during translate panel render indicates an invalid DOM (<span> in <option>). Will become a hard error in React 19 strict mode."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_yt_transcript_api.py (created)"
+  ],
+  "success_rate": {
+    "backend": "100% (13/13)",
+    "frontend": "~92% (all functional flows pass; 2 non-blocking JS console / runtime errors)"
+  },
+  "test_credentials": "N/A — no auth in this app.",
+  "seed_data_creation": "None. Tests created 1 transcript document and 1 job document via legitimate API calls (no direct DB writes).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend pytest suite is at /app/backend/tests/test_yt_transcript_api.py and is fast (~13s). Run with: pytest /app/backend/tests/test_yt_transcript_api.py -v --junitxml=/app/test_reports/pytest/pytest_results.xml. The two known frontend issues are (1) uncaught clipboard writeText rejection on copy-all-btn (headless browsers always deny it) and (2) <span> hydration error inside <option> in the translate language dropdown. Verified working: extract (jNQXAC9IVRw → 4 segments title 'Me at the zoo'), Claude summarize (tldr 177 chars, 8 key_points), GPT-4o Spanish translate (returns 'Muy bien, aquí estamos…'), tabs switch, 9 tool cards, 3 pricing cards, footer 'START EXTRACTING'.",
+  "rca of the issue": "Issue #1 (clipboard): React dev runtime overlay catches any unhandled promise rejection or window error; navigator.clipboard.writeText returns a Promise that rejects in non-HTTPS-trusted / headless contexts and the handler does not attach .catch(). Fix: try { await navigator.clipboard.writeText(text); } catch (e) { /* fallback or ignore */ }. Issue #2 (option<span>): The dynamic text node inside the <option> JSX (likely something like <option>{`[${l.code}] `}{l.name.toUpperCase()}</option>) produces two children which the emergent x-component instrumentation wraps in a <span>, creating <option><span>…</span></option>. Browsers strip this and React reports a hydration mismatch. Fix: collapse to a single template literal child."
+}

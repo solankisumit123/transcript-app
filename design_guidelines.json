@@ -1,0 +1,146 @@
+{
+  "theme": {
+    "mode": "dark",
+    "archetype": "Hybrid: Archetype 4 (Swiss & High-Contrast) + Archetype 5 (Jewel & Luxury)",
+    "description": "A premium, cinematic media-processing platform. Distinctive, brutalist precision meets high-end studio atmosphere. Completely avoids generic AI/SaaS tropes (no purple gradients, no Inter, no rounded soft cards). High density data display combined with dramatic, editorial spatial layouts."
+  },
+  "typography": {
+    "google_fonts_url": "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@100..800&family=Outfit:wght@100..900&display=swap",
+    "headings": {
+      "family": "'Outfit', sans-serif",
+      "style": "Bold Geometric Sans. Use tight tracking (tracking-tight) for large sizes. Represents cinematic scale and authority."
+    },
+    "body": {
+      "family": "'JetBrains Mono', monospace",
+      "style": "Grotesque Mono. Used for timestamps, tabular data, exact transcriptions, and precise controls. Communicates technical rigor and density."
+    },
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl lg:text-6xl tracking-tighter leading-none",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl tracking-tight leading-tight",
+      "h3": "text-xl sm:text-2xl tracking-tight",
+      "body": "text-sm sm:text-base leading-relaxed font-mono",
+      "mono_label": "text-xs tracking-[0.2em] uppercase font-mono text-muted-foreground"
+    }
+  },
+  "colors": {
+    "intent": "Deep obsidian void with stark white geometry and a single high-energy 'Electric Signal Orange' for active recording/processing states. Avoid generic blues or purples.",
+    "hsl_variables": {
+      "dark": {
+        "--background": "0 0% 4%",
+        "--foreground": "0 0% 98%",
+        "--card": "0 0% 6%",
+        "--card-foreground": "0 0% 98%",
+        "--popover": "0 0% 6%",
+        "--popover-foreground": "0 0% 98%",
+        "--primary": "13 100% 55%",
+        "--primary-foreground": "0 0% 98%",
+        "--secondary": "0 0% 12%",
+        "--secondary-foreground": "0 0% 98%",
+        "--muted": "0 0% 12%",
+        "--muted-foreground": "0 0% 60%",
+        "--accent": "0 0% 16%",
+        "--accent-foreground": "0 0% 98%",
+        "--destructive": "0 84% 60%",
+        "--destructive-foreground": "0 0% 98%",
+        "--border": "0 0% 15%",
+        "--input": "0 0% 15%",
+        "--ring": "13 100% 55%",
+        "--radius": "0px"
+      },
+      "light": {
+        "--background": "0 0% 98%",
+        "--foreground": "0 0% 4%",
+        "--card": "0 0% 100%",
+        "--card-foreground": "0 0% 4%",
+        "--popover": "0 0% 100%",
+        "--popover-foreground": "0 0% 4%",
+        "--primary": "13 100% 50%",
+        "--primary-foreground": "0 0% 98%",
+        "--secondary": "0 0% 92%",
+        "--secondary-foreground": "0 0% 4%",
+        "--muted": "0 0% 92%",
+        "--muted-foreground": "0 0% 40%",
+        "--accent": "0 0% 90%",
+        "--accent-foreground": "0 0% 4%",
+        "--destructive": "0 84% 40%",
+        "--destructive-foreground": "0 0% 98%",
+        "--border": "0 0% 85%",
+        "--input": "0 0% 85%",
+        "--ring": "13 100% 50%",
+        "--radius": "0px"
+      }
+    }
+  },
+  "images": {
+    "hero_background": {
+      "url": "https://images.pexels.com/photos/18599102/pexels-photo-18599102.jpeg",
+      "description": "Granular black and white abstract texture. Use as a low-opacity fixed background overlay across the entire app (opacity-10 mix-blend-overlay) to break digital flatness."
+    },
+    "studio_context": {
+      "url": "https://images.pexels.com/photos/4085810/pexels-photo-4085810.jpeg",
+      "description": "Condenser microphone in dark studio lighting. Use in feature sections highlighting audio enhancement or high-fidelity processing."
+    },
+    "dashboard_context": {
+      "url": "https://images.pexels.com/photos/8100067/pexels-photo-8100067.jpeg",
+      "description": "Professional video editor working with dual monitors in dimly lit studio. Good for testimonials or 'built for professionals' sections."
+    }
+  },
+  "layout_spacing": {
+    "system": "Generous spacing philosophy (p-12, gap-8) for marketing sections. Tight 'Control Room' grid (gap-4) for dashboard/viewer.",
+    "borders": "Expose the skeleton. Use 1px solid borders (border-border) to define spatial relationships instead of soft drop shadows.",
+    "radius": "0px (Sharp). Utilitarian, brutalist tech vibe. Card components should be rectangular blocks."
+  },
+  "motion": {
+    "scrolling": "Smooth momentum scrolling (Lenis highly recommended).",
+    "interactions": "Crisp transitions. On hover, elements shouldn't softly lift, they should snap into high contrast (e.g. border changes to --primary, background shifts to slightly lighter grey).",
+    "loaders": "Use ASCII art or monospaced blinking text cursors (e.g., 'PROCESSING_...') instead of generic spinning circles."
+  },
+  "components": {
+    "hero": {
+      "layout": "Asymmetrical. Huge left-aligned headline. Right side is an abstract void or large URL input form.",
+      "input": "Paste-and-go YouTube URL input must be brutalist: a giant rectangular input block (h-16), stark text, 1px sharp border, high contrast 'Extract' CTA button in Electric Signal Orange.",
+      "visuals": "No generic illustrations. Use the granular noise texture overlay (opacity-10) over a deep black background."
+    },
+    "transcript_viewer": {
+      "layout": "Split-pane cinematic viewer. Uses grid-cols-1 md:grid-cols-12.",
+      "video_pane": "col-span-1 md:col-span-5. Sticky on scroll. Border-r border-border.",
+      "transcript_pane": "col-span-1 md:col-span-7. Scrollable. Dense, editorial typography.",
+      "timestamps": "JetBrains Mono. Pinned to the left side of the transcript block. Dimmed grey until active.",
+      "active_state": "The currently spoken sentence lights up stark white with an Electric Orange left-border indicator. Smooth auto-scroll."
+    },
+    "summarizer_panel": {
+      "layout": "Bento Grid Mode B ('Control Room'). Tight gap-4.",
+      "cards": "Cardless or 1px sharp borders. High density. 'Key Points' presented in terminal-like list with monospace numbering [01], [02], etc.",
+      "ai_indicator": "Avoid generic magic wand icons. Use a technical label like 'SYS.ANALYSIS' with a pulsing orange dot."
+    },
+    "translator_panel": {
+      "styling": "Two-column technical layout (Original vs Translated). Sync scrolling if side-by-side.",
+      "dropdowns": "Shadcn Select customized to be sharp rectangles, dark grey backgrounds, monospace font for language codes (e.g., [EN-US], [ES-ES])."
+    },
+    "pricing_cards": {
+      "style": "The 'Grid Borders' tech look. All cards sit in a single border-collapse container.",
+      "highlights": "Pro/Enterprise tier has a 'Tracing Beam' effect (1px glowing orange line around the border) or simply a solid 2px primary border, completely flat.",
+      "cta": "Flat background colors. Inverse text. No gradients."
+    },
+    "dashboard": {
+      "layout": "Control Room layout. Side navigation with Phosphor Icons. Main area uses full width.",
+      "table": "Batch processing queue is a dense Shadcn Table. Status badges are small sharp rectangles (e.g., [PROCESSING], [DONE]). Monospaced exact file sizes (450.2 MB)."
+    },
+    "navigation": {
+      "style": "Crystal Glassmorphism (backdrop-blur-xl bg-background/70 border-b border-white/10) so it overlays the grain texture perfectly. Pinned z-50.",
+      "brand": "Text logo using 'Outfit' font, bold tracking tight. E.g., Y/T_TRANSCRIPT."
+    },
+    "footer": {
+      "style": "Massive scale contrast shift. py-24 or py-32 border-t border-white/10.",
+      "cta": "A giant text link filling the width (e.g., text-[8vw]), 'START EXTRACTING ->', changing to Electric Orange on hover."
+    }
+  },
+  "accessibility_and_testing": {
+    "contrast": "Ensure pure contrast on text overlay. Text must hit APCA guidelines or standard WCAG AA (4.5:1).",
+    "testing_attributes": "CRITICAL: All interactive elements (buttons, inputs, language dropdowns, transcript lines, copy buttons) MUST have a descriptive data-testid attribute (e.g., 'url-input-field', 'extract-submit-btn', 'transcript-line-12', 'tab-summarizer')."
+  },
+  "icons": {
+    "library": "@phosphor-icons/react",
+    "style": "Duotone or Regular weight, providing a highly precise, technical geometry."
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "summary": "Full v2.0 pipeline E2E test on public URL. Backend: 14/15 pytest passing. Frontend: all core flows verified (hero, nav without PRICING, demo extract with strategy badge, tabs, Pipeline download→WS progress, transcribe validation, 9 tool cards, footer). Two known issues surface: (1) /metrics (Prometheus) not reachable on public ingress — only /api/* is proxied; (2) <span> inside <option> hydration console error now in Pipeline.js resolution dropdown (same regression as v1 but in new component).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "/metrics",
+        "issue": "Prometheus /metrics is at backend root (not under /api), so it works at http://localhost:8001/metrics but is NOT reachable through the public ingress which only routes /api/* to backend. Public GET /metrics returns the React index.html. Fine for in-cluster Prometheus scraping, but the test-plan requirement that '/metrics → 200 text containing http_requests_total' fails against REACT_APP_BACKEND_URL. Either mount the endpoint at /api/metrics (already exists but returns 404 for prom format; only /api/metrics/json works) or document scraping path."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Pipeline.js DownloadCard resolution <select>",
+        "issue": "Console error: 'In HTML, <span> cannot be a child of <option>. This will cause a hydration error.' Originates at /app/frontend/src/components/Pipeline.js:179 where each <option> for resolution is rendered with {`${r}p`} as its child — the x-component instrumentation wraps the dynamic text in a <span>, producing an invalid DOM. Same bug class that was reported for TranscriptViewer's <option> in iteration 1, now re-introduced in Pipeline.js. Request: test plan explicitly says 'No uncaught console errors during full flow' — this reproduces every render of the Pipeline section.",
+        "selector": "[data-testid='download-res'] option",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "testid_naming_mismatches_with_test_plan": [
+      "Test plan expects [data-testid='tools-card-*'] (9 cards) → actual is [data-testid='tool-card-*'] (singular). 9 cards are present.",
+      "Test plan expects [data-testid='download-url-input'] → actual is [data-testid='download-url']. Input works correctly.",
+      "Test plan expects [data-testid='transcribe-file'] → actual is [data-testid='transcribe-file-input'] + [data-testid='transcribe-dropzone']. Both render and work."
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_pipeline.py",
+    "/app/backend/tests/test_yt_transcript_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix Pipeline.js:179 resolution <option> child rendering: change `{r}p` to a single template literal `{`${r}p`}` expressed as one string, e.g. <option value={r} key={r}>{`${r}p`}</option> — but ensure emergent instrumentation does not wrap it. Safest fix: set the label via a computed const string and render `{label}` only. Same pattern needed anywhere else a dynamic token is the sole child of <option>.",
+    "Decide Prometheus exposure strategy: either expose at /api/metrics (Prometheus text format) or document that /metrics is cluster-internal only. Current /api/metrics returns 404; /api/metrics/json works (observability JSON).",
+    "Optional: align data-testid names with the review_request spec (tools-card-*, download-url-input, transcribe-file) OR update spec/tests to match the implemented names — the test plan can't grep for these otherwise."
+  ],
+  "critical_code_review_comments": [
+    "Pipeline.js: <option> children bug re-introduces hydration console error previously fixed in TranscriptViewer. Suggests no shared lint/ESLint rule catches this — add custom rule or a UI primitive that renders <option> children as pre-joined strings.",
+    "server.py mounts Prometheus under '/metrics' at root; all other endpoints live under '/api'. This is inconsistent with the app's ingress contract (only /api/* is proxied). Pick one location.",
+    "Rate-limit test spent ~16s (30 reqs + 15s cool-down). Consider an in-test admin endpoint to reset the token-bucket for CI speed.",
+    "Media-download job surfaces 403 via WebSocket correctly (verified visually). Good error surfacing.",
+    "demo-first-youtube-video currently resolves to strategy=curated_demo on this run, not yt_dlp. Acceptable because curated fallback is allowed, but note the context note said yt_dlp was expected — yt_dlp is likely hitting the same cloud-IP block as /api/media/download."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "93% (14/15 — only /metrics public-ingress assertion failed; endpoint works at localhost)",
+    "frontend": "95% (all functional flows pass; 1 console hydration error)"
+  },
+  "test_credentials": "N/A — no auth in this app.",
+  "seed_data_creation": "Tests created ~10 job documents + 3 batch jobs via legitimate API calls. No direct DB writes.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run pytest backend/tests/test_pipeline.py with BASE_URL=https://content-processor-8.preview.emergentagent.com. Rate-limit test is bursty (60 req) and needs 15s cool-down. /metrics must be queried on http://localhost:8001/metrics (not via public URL). Verified strategy fallback chain works: curated_demo fires for hero IDs when yt-dlp gets cloud-IP 403. Frontend data-testids actually present: tool-card-*, download-card, download-url, download-kind, download-fmt, download-res, download-submit, download-progress, download-file-link, transcribe-card, transcribe-dropzone, transcribe-file-input, transcribe-lang, transcribe-submit, transcribe-progress, transcribe-output, pipeline-section, meta-strategy. Translate endpoint requires body keys 'transcript' + 'target_language' (NOT 'text'/'target_lang').",
+  "rca_of_issues": {
+    "prometheus_404_public": "Kubernetes ingress forwards only paths matching ^/api to backend:8001. FastAPI registers Prometheus at '/metrics' (root), so the public URL serves the React SPA instead. Move registration to '/api/metrics' (raw Prometheus text) in server.py, or expose a separate scrape-only NodePort. In-cluster Prometheus scrapes should use http://backend:8001/metrics which still works.",
+    "option_span_hydration": "Pipeline.js:178-180 builds <option> elements from a map where the JSX child is a dynamic expression. The emergent live-editing instrumentation injects a <span data-ve-dynamic='true' style={display:contents}> wrapper around single-expression children that are considered 'dynamic'. Browsers strip <span> from inside <option>, causing React hydration to log the warning on every mount. Fix by making the child a static-appearing string literal at the JSX level — e.g. const label = `${r}p`; return <option value={r} key={r}>{label}</option>; — or add x-excluded / mark as non-dynamic."
+  }
+}
