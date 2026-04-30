@@ -144,7 +144,11 @@ async def translate_text(text: str, target_language: str) -> str:
         remaining = remaining[split_at:].lstrip()
 
     parts = []
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    import asyncio
+    async with httpx.AsyncClient(timeout=30.0, headers=headers) as client:
         for chunk in chunks:
             resp = await client.get(
                 "https://translate.googleapis.com/translate_a/single",
@@ -153,6 +157,7 @@ async def translate_text(text: str, target_language: str) -> str:
             resp.raise_for_status()
             data = resp.json()
             parts.append("".join(item[0] for item in data[0] if item[0]))
+            await asyncio.sleep(0.5)  # Prevent rate limiting on large texts
 
     return " ".join(parts)
 

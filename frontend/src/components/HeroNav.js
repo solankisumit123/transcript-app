@@ -3,21 +3,7 @@ import axios from "axios";
 import "@/App.css";
 import {
     ArrowRight,
-    Copy,
-    Check,
-    Lightning,
-    GlobeHemisphereWest,
-    Brain,
-    Stack,
-    Microphone,
-    DownloadSimple,
-    SpeakerHigh,
-    Translate,
-    PlayCircle,
     SpinnerGap,
-    CaretRight,
-    GithubLogo,
-    BookOpen,
 } from "@phosphor-icons/react";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -74,7 +60,7 @@ function Navigation() {
 // ---------------------------------------------------------------------------
 // Hero with brutalist URL input
 // ---------------------------------------------------------------------------
-function Hero({ onExtract, loading, error, urlValue, setUrlValue }) {
+function Hero({ onExtract, loading, jobProgress, error, urlValue, setUrlValue }) {
     return (
         <section
             id="extract"
@@ -123,7 +109,7 @@ function Hero({ onExtract, loading, error, urlValue, setUrlValue }) {
                             >
                                 {loading ? (
                                     <>
-                                        <SpinnerGap size={18} className="animate-spin" /> EXTRACTING
+                                        <SpinnerGap size={18} className="animate-spin" /> {jobProgress ? jobProgress.toUpperCase() : "EXTRACTING"}
                                     </>
                                 ) : (
                                     <>

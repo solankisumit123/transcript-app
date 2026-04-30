@@ -38,6 +38,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, ConfigDict
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
@@ -81,7 +82,8 @@ else:
 db = mongo_client[os.environ.get("DB_NAME", "yt_transcript_dev")]
 
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
-DOWNLOAD_DIR = Path(os.environ.get("DOWNLOAD_DIR", "/tmp/ytdownloads"))
+_default_dl_dir = Path(tempfile.gettempdir()) / "ytdownloads"
+DOWNLOAD_DIR = Path(os.environ.get("DOWNLOAD_DIR", str(_default_dl_dir)))
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -103,6 +105,10 @@ app = FastAPI(
     redoc_url="/api/redoc",
     lifespan=lifespan,
 )
+
+# Crucial for high-traffic optimization: compress transcript payloads
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 api_router = APIRouter(prefix="/api")
 
 
@@ -333,7 +339,14 @@ async def extract_transcript(req: ExtractRequest, request: Request):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Async path: enqueue Celery task and return job_id immediately
+    # 1. Check Cache first
+    lang_query = req.language or "en"
+    cached = await db.transcripts.find_one({"video_id": video_id, "language": {"$regex": f"^{lang_query}", "$options": "i"}})
+    if cached:
+        cached.pop("_id", None)
+        return TranscriptResponse(**cached)
+
+    # 2. Async path explicitly requested
     if req.async_:
         job = await _create_job_doc(job_type="extract", input_url=req.url, options={"language": req.language})
         from tasks import task_extract_transcript
@@ -343,12 +356,55 @@ async def extract_transcript(req: ExtractRequest, request: Request):
             content={"job_id": job.id, "status": "queued", "stream": f"/api/ws/jobs/{job.id}"},
         )
 
-    # Sync path
+    # 3. Sync path (try to fetch quickly)
+    import asyncio
+    global _pending_fetches
+    if '_pending_fetches' not in globals():
+        _pending_fetches = {}
+        
+    fetch_key = f"{video_id}_{req.language or 'en'}"
+    
     try:
-        result = fetch_transcript(video_id, language=req.language)
+        if fetch_key in _pending_fetches:
+            # Wait for the in-progress fetch to complete instead of DDOSing YouTube
+            result_or_exc = await _pending_fetches[fetch_key]
+            if isinstance(result_or_exc, Exception):
+                raise result_or_exc
+            result = result_or_exc
+        else:
+            future = asyncio.Future()
+            _pending_fetches[fetch_key] = future
+            try:
+                # Use asyncio's default shared threadpool for high traffic throughput
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(None, fetch_transcript, video_id, req.language)
+                future.set_result(result)
+            except Exception as e:
+                future.set_result(e)
+                raise
+            finally:
+                _pending_fetches.pop(fetch_key, None)
+            
     except TranscriptError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        # User wants AI fallback but without the "Generating using AI" text
+        log.warning("transcript.text_failed_fallback_to_ai", video_id=video_id, detail=str(e))
+        job = await _create_job_doc(job_type="transcribe", input_url=req.url, options={"language": req.language})
+        from tasks import task_transcribe_url
+        import asyncio
+        loop = asyncio.get_event_loop()
+        # Run in executor to prevent freezing the server if Redis is missing and task runs eagerly
+        loop.run_in_executor(None, task_transcribe_url.delay, job.id, req.url, req.language)
+        return JSONResponse(
+            status_code=202,
+            content={
+                "job_id": job.id, 
+                "status": "ai_generation", 
+                "message": "Extracting Video Transcript...",
+                "stream": f"/api/ws/jobs/{job.id}"
+            },
+        )
 
+    # 4. Success: process and cache result
     segments: List[TranscriptSegment] = []
     full_text_parts: List[str] = []
     total_duration = 0.0
@@ -369,7 +425,7 @@ async def extract_transcript(req: ExtractRequest, request: Request):
     response = TranscriptResponse(
         video_id=video_id,
         video_url=f"https://www.youtube.com/watch?v={video_id}",
-        thumbnail=f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg",
+        thumbnail=f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
         title=result.title,
         language=result.language,
         segments=segments,
@@ -378,9 +434,13 @@ async def extract_transcript(req: ExtractRequest, request: Request):
         word_count=len(full_text.split()),
         strategy=result.strategy,
     )
-    doc = response.model_dump()
-    doc["extracted_at"] = doc["extracted_at"].isoformat()
-    await db.transcripts.insert_one(doc)
+    
+    # Save to MongoDB cache
+    await db.transcripts.update_one(
+        {"video_id": video_id, "language": result.language},
+        {"$set": response.model_dump()},
+        upsert=True
+    )
     return response
 
 
@@ -782,7 +842,6 @@ app.add_middleware(
 
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-import os
 
 # Serve static frontend files if the build directory exists
 frontend_path = Path(__file__).parent / "frontend_build"

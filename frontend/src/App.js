@@ -35,12 +35,15 @@ function Home() {
             .catch(() => setLanguages([]));
     }, []);
 
+    const [jobProgress, setJobProgress] = useState(null);
+
     const handleExtract = async (url) => {
         if (!url || !url.trim()) {
             setError("Provide a YouTube URL or video ID.");
             return;
         }
         setLoading(true);
+        setJobProgress(null);
         setError("");
         setSummary(null);
         setTranslation(null);
@@ -49,16 +52,69 @@ function Home() {
         setErrorTranslate("");
         setErrorContent("");
         try {
-            const { data } = await axios.post(`${API}/transcript/extract`, { url });
-            setTranscript(data);
-            setTimeout(() => {
-                document.getElementById("viewer")?.scrollIntoView({ behavior: "smooth", block: "start" });
-            }, 80);
+            // Note: server now returns 202 with job_id if falling back to AI
+            const resp = await axios.post(`${API}/transcript/extract`, { url });
+            
+            if (resp.status === 202 && resp.data.job_id) {
+                // Background job started (AI Fallback)
+                setJobProgress(resp.data.message || "Generating transcript using AI...");
+                const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+                // Determine the base URL dynamically for production deployments
+                let baseUrl = "";
+                if (API.startsWith("http")) {
+                    baseUrl = API.replace(/^https?:/, wsProtocol).replace(/\/api$/, "");
+                } else {
+                    baseUrl = `${wsProtocol}//${window.location.host}`;
+                }
+                const ws = new WebSocket(`${baseUrl}${resp.data.stream}`);
+                
+                ws.onmessage = (e) => {
+                    const msg = JSON.parse(e.data);
+                    // The backend WebSocket returns "status", not "type"
+                    if (msg.status === "processing") {
+                        setJobProgress(`${msg.message || "Processing..."} (${msg.progress}%)`);
+                    } else if (msg.status === "done") {
+                        ws.close();
+                        setJobProgress("Finalizing...");
+                        // Fetch the final result using the job's result_id
+                        axios.get(`${API}/jobs/${resp.data.job_id}/result`).then(jobRes => {
+                            setTranscript(jobRes.data.result || jobRes.data);
+                            setLoading(false);
+                            setJobProgress(null);
+                            setTimeout(() => {
+                                document.getElementById("viewer")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                            }, 80);
+                        }).catch(err => {
+                            setError("Failed to fetch generated AI transcript.");
+                            setLoading(false);
+                            setJobProgress(null);
+                        });
+                    } else if (msg.status === "failed") {
+                        ws.close();
+                        setError(msg.message || "AI transcription failed.");
+                        setLoading(false);
+                        setJobProgress(null);
+                    }
+                };
+                
+                ws.onerror = () => {
+                    setError("WebSocket connection error. Could not track AI transcription progress.");
+                    setLoading(false);
+                    setJobProgress(null);
+                };
+            } else {
+                // Immediate sync response
+                setTranscript(resp.data);
+                setLoading(false);
+                setTimeout(() => {
+                    document.getElementById("viewer")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }, 80);
+            }
         } catch (e) {
             const msg = e?.response?.data?.detail || e.message || "Extraction failed.";
             setError(typeof msg === "string" ? msg : JSON.stringify(msg));
-        } finally {
             setLoading(false);
+            setJobProgress(null);
         }
     };
 
@@ -125,6 +181,7 @@ function Home() {
                 <Hero
                     onExtract={handleExtract}
                     loading={loading}
+                    jobProgress={jobProgress}
                     error={error}
                     urlValue={urlValue}
                     setUrlValue={setUrlValue}

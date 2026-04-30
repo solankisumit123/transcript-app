@@ -31,7 +31,18 @@ if not LOCAL_MOCK_DB:
 
 
 def _run_db(awaitable):
-    return asyncio.run(awaitable)
+    """Run an async coroutine safely from a sync context (e.g., Celery task)."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # Already in an async context — create a new loop in a thread-safe way
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(asyncio.run, awaitable)
+                return future.result()
+        return loop.run_until_complete(awaitable)
+    except RuntimeError:
+        return asyncio.run(awaitable)
 
 
 def _set_job(job_id: str, **fields):
@@ -207,14 +218,60 @@ def task_transcribe_url(self, job_id: str, url: str, language: Optional[str] = N
         if audio_path:
             cleanup(audio_path)
         raise
+    def fmt_ts(s: float) -> str:
+        h = int(s // 3600)
+        m = int((s % 3600) // 60)
+        sc = int(s % 60)
+        return f"{h:02}:{m:02}:{sc:02}" if h > 0 else f"{m:02}:{sc:02}"
 
-    _insert_transcription(
-        {"id": job_id, "source_url": url, **result, "created_at": datetime.now(timezone.utc).isoformat()}
-    )
-    publish_progress(job_id, status="done", progress=100, message="done", data=result)
+    formatted_segments = []
+    total_duration = 0.0
+    for i, seg in enumerate(result.get("segments", [])):
+        start = float(seg.get("start", 0))
+        duration = float(seg.get("end", 0)) - start if "end" in seg else float(seg.get("duration", 2.0))
+        end = start + duration
+        total_duration = max(total_duration, end)
+        formatted_segments.append({
+            "index": i,
+            "start": start,
+            "duration": duration,
+            "end": end,
+            "timestamp": fmt_ts(start),
+            "text": seg.get("text", "")
+        })
+
+    full_text = " ".join(s["text"] for s in formatted_segments)
+    
+    # Try to extract video ID for thumbnail/URL
+    import re
+    video_id = url
+    m = re.search(r"(?:v=|/)([0-9A-Za-z_-]{11})", url)
+    if m:
+        video_id = m.group(1)
+
+    payload = {
+        "id": job_id,
+        "video_id": video_id,
+        "video_url": f"https://www.youtube.com/watch?v={video_id}" if len(video_id) == 11 else url,
+        "thumbnail": f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg" if len(video_id) == 11 else "",
+        "title": f"AI Transcription of {video_id}",
+        "language": result.get("language", "en"),
+        "segments": formatted_segments,
+        "full_text": full_text,
+        "duration": total_duration,
+        "word_count": len(full_text.split()),
+        "strategy": "ai_speech_to_text",
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+
+    _insert_transcription(payload)
+    # PyMongo injects an _id of type ObjectId which is not JSON serializable
+    payload.pop("_id", None)
+    
+    publish_progress(job_id, status="done", progress=100, message="done", data=payload)
     _set_job(job_id, status="done", progress=100, result_id=job_id, result_kind="transcription")
     cleanup(audio_path)
-    return result
+    return payload
 
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,22 @@ from demo_transcripts import get_demo_transcript
 
 YT_PROXY_URL = os.environ.get("YT_PROXY_URL", "").strip()
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "").strip()
+YT_COOKIES_FILE = os.environ.get("YT_COOKIES_FILE", "").strip()
+
+# Global connection-pooled session for high traffic performance
+http_client = requests.Session()
+adapter = requests.adapters.HTTPAdapter(pool_connections=100, pool_maxsize=100)
+http_client.mount("http://", adapter)
+http_client.mount("https://", adapter)
+
+if YT_COOKIES_FILE and os.path.exists(YT_COOKIES_FILE):
+    import http.cookiejar
+    try:
+        cj = http.cookiejar.MozillaCookieJar(YT_COOKIES_FILE)
+        cj.load(ignore_discard=True, ignore_expires=True)
+        http_client.cookies.update(cj)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -100,41 +116,48 @@ def rate_limit(key: str, capacity: int = 30, refill_per_sec: float = 0.5) -> boo
 def _try_yt_transcript_api(video_id: str, language: Optional[str]) -> Optional[TranscriptResult]:
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
-        from youtube_transcript_api.proxies import GenericProxyConfig
-    except Exception:  # noqa: BLE001
+    except ImportError:
         return None
 
-    proxies = None
+    kwargs = {}
     if YT_PROXY_URL:
-        try:
-            proxies = GenericProxyConfig(http_url=YT_PROXY_URL, https_url=YT_PROXY_URL)
-        except Exception:  # noqa: BLE001
-            proxies = None
+        kwargs["proxies"] = {"http": YT_PROXY_URL, "https": YT_PROXY_URL}
+    if YT_COOKIES_FILE and os.path.exists(YT_COOKIES_FILE):
+        kwargs["cookies"] = YT_COOKIES_FILE
 
     try:
-        ytt = YouTubeTranscriptApi(proxy_config=proxies) if proxies else YouTubeTranscriptApi()
-        if language:
-            fetched = ytt.fetch(video_id, languages=[language, "en"])
-        else:
-            fetched = ytt.fetch(video_id)
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id, **kwargs)
+        
+        target_lang = (language or "en").lower()
+        # Find transcript prioritizing requested language, then english
+        try:
+            transcript = transcript_list.find_transcript([target_lang, "en"])
+        except Exception:
+            # If neither found, just grab the first available
+            transcript = list(transcript_list)[0]
+
+        fetched = transcript.fetch()
+        
         segments = [
             {
-                "start": float(s.start),
-                "duration": float(s.duration),
-                "text": (s.text or "").replace("\n", " ").strip(),
+                "start": float(s["start"]),
+                "duration": float(s["duration"]),
+                "text": (s["text"] or "").replace("\n", " ").strip(),
             }
-            for s in fetched.snippets
+            for s in fetched
         ]
+        
         if not segments:
             return None
+            
         return TranscriptResult(
             title=None,
-            language=fetched.language_code or (language or "en"),
+            language=transcript.language_code,
             segments=segments,
-            strategy="youtube_transcript_api" + ("_proxy" if proxies else ""),
+            strategy="youtube_transcript_api" + ("_proxy" if YT_PROXY_URL else "") + ("_cookies" if "cookies" in kwargs else ""),
         )
-    except Exception as e:  # noqa: BLE001
-        log.info("strategy.yt_api.failed", err=str(e)[:200], proxy=bool(proxies))
+    except Exception as e:
+        log.info("strategy.yt_api.failed", err=str(e)[:200], has_cookies="cookies" in kwargs)
         return None
 
 
@@ -153,7 +176,7 @@ def _try_youtube_data_api(video_id: str, language: Optional[str]) -> Optional[Tr
         return None
     try:
         # 1. List captions
-        r = requests.get(
+        r = http_client.get(
             "https://www.googleapis.com/youtube/v3/captions",
             params={"part": "snippet", "videoId": video_id, "key": YOUTUBE_API_KEY},
             timeout=10,
@@ -178,7 +201,7 @@ def _try_youtube_data_api(video_id: str, language: Optional[str]) -> Optional[Tr
         chosen = chosen or items[0]
 
         # 2. Fetch video title for context
-        meta = requests.get(
+        meta = http_client.get(
             "https://www.googleapis.com/youtube/v3/videos",
             params={"part": "snippet,contentDetails", "id": video_id, "key": YOUTUBE_API_KEY},
             timeout=10,
@@ -263,6 +286,8 @@ def _try_yt_dlp(video_id: str, language: Optional[str]) -> Optional[TranscriptRe
     }
     if YT_PROXY_URL:
         ydl_opts["proxy"] = YT_PROXY_URL
+    if YT_COOKIES_FILE and os.path.exists(YT_COOKIES_FILE):
+        ydl_opts["cookiefile"] = YT_COOKIES_FILE
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -287,7 +312,7 @@ def _try_yt_dlp(video_id: str, language: Optional[str]) -> Optional[TranscriptRe
                 break
         if not sub_url:
             return None
-        body = requests.get(sub_url, timeout=15).text
+        body = http_client.get(sub_url, timeout=15).text
         segments = _parse_vtt_or_srt(body)
         if not segments:
             return None
@@ -295,7 +320,7 @@ def _try_yt_dlp(video_id: str, language: Optional[str]) -> Optional[TranscriptRe
             title=title,
             language=chosen_lang or target_lang,
             segments=segments,
-            strategy="yt_dlp" + ("_proxy" if YT_PROXY_URL else ""),
+            strategy="yt_dlp" + ("_proxy" if YT_PROXY_URL else "") + ("_cookies" if YT_COOKIES_FILE and os.path.exists(YT_COOKIES_FILE) else ""),
         )
     except Exception as e:  # noqa: BLE001
         log.info("strategy.yt_dlp.failed", err=str(e)[:200])
@@ -303,7 +328,225 @@ def _try_yt_dlp(video_id: str, language: Optional[str]) -> Optional[TranscriptRe
 
 
 # ---------------------------------------------------------------------------
-# Strategy 4: curated demo (last resort, only known IDs)
+# Strategy 4: Scrape Watch Page
+# ---------------------------------------------------------------------------
+def _try_watch_page_scrape(video_id: str, language: Optional[str]) -> Optional[TranscriptResult]:
+    try:
+        proxies = None
+        if YT_PROXY_URL:
+            proxy_list = [p.strip() for p in YT_PROXY_URL.split(",")]
+            proxy = proxy_list[0]
+            proxies = {"http": proxy, "https": proxy}
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        resp = http_client.get(url, headers=headers, proxies=proxies, timeout=10)
+        if not resp.ok:
+            return None
+
+        # Look for playerCaptionsTracklistRenderer
+        html = resp.text
+        match = re.search(r'"playerCaptionsTracklistRenderer":(\{.*?\})', html)
+        if not match:
+            return None
+        
+        captions_json = json.loads(match.group(1))
+        caption_tracks = captions_json.get("captionTracks", [])
+        if not caption_tracks:
+            return None
+
+        target_lang = (language or "en").lower()
+        chosen_track = None
+        for track in caption_tracks:
+            lang_code = track.get("languageCode", "").lower()
+            if lang_code.startswith(target_lang):
+                chosen_track = track
+                break
+        chosen_track = chosen_track or caption_tracks[0]
+        
+        sub_url = chosen_track.get("baseUrl")
+        if not sub_url:
+            return None
+
+        # Fetch the XML subs
+        sub_resp = http_client.get(sub_url, timeout=10)
+        if not sub_resp.ok:
+            return None
+            
+        # Parse XML
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(sub_resp.text)
+        segments = []
+        for child in root:
+            if child.tag == "text":
+                start = float(child.attrib.get("start", 0))
+                duration = float(child.attrib.get("dur", 2.0))
+                text = (child.text or "").replace("\n", " ").strip()
+                import html as html_lib
+                text = html_lib.unescape(text)
+                if text:
+                    segments.append({
+                        "start": start,
+                        "duration": duration,
+                        "text": text
+                    })
+                    
+        if not segments:
+            return None
+            
+        title_match = re.search(r'"title":"(.*?)"', html)
+        title = title_match.group(1) if title_match else None
+
+        return TranscriptResult(
+            title=title,
+            language=chosen_track.get("languageCode", target_lang),
+            segments=segments,
+            strategy="watch_page_scrape" + ("_proxy" if proxies else "")
+        )
+    except Exception as e:
+        log.info("strategy.scrape.failed", err=str(e)[:200])
+        return None
+
+# ---------------------------------------------------------------------------
+# Strategy 5: Free Proxy Scrape (Fallback for IP blocks)
+# ---------------------------------------------------------------------------
+def _try_free_proxy_scrape(video_id: str, language: Optional[str]) -> Optional[TranscriptResult]:
+    try:
+        # Fetch a list of free HTTP proxies
+        proxy_resp = http_client.get(
+            "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
+            timeout=5
+        )
+        if not proxy_resp.ok:
+            return None
+            
+        proxy_list = [p.strip() for p in proxy_resp.text.split("\n") if p.strip()]
+        import random
+        # Try up to 3 random free proxies
+        for _ in range(3):
+            if not proxy_list:
+                break
+            proxy = random.choice(proxy_list)
+            proxies = {"http": f"http://{proxy}", "https": f"http://{proxy}"}
+            
+            try:
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+                    "Accept-Language": "en-US,en;q=0.9",
+                }
+                url = f"https://www.youtube.com/watch?v={video_id}"
+                resp = http_client.get(url, headers=headers, proxies=proxies, timeout=8)
+                if not resp.ok:
+                    continue
+
+                html = resp.text
+                match = re.search(r'"playerCaptionsTracklistRenderer":(\{.*?\})', html)
+                if not match:
+                    continue
+                
+                captions_json = json.loads(match.group(1))
+                caption_tracks = captions_json.get("captionTracks", [])
+                if not caption_tracks:
+                    continue
+
+                target_lang = (language or "en").lower()
+                chosen_track = next((t for t in caption_tracks if t.get("languageCode", "").lower().startswith(target_lang)), caption_tracks[0])
+                
+                sub_url = chosen_track.get("baseUrl")
+                if not sub_url:
+                    continue
+
+                sub_resp = http_client.get(sub_url, timeout=8)
+                if not sub_resp.ok:
+                    continue
+                    
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(sub_resp.text)
+                segments = []
+                for child in root:
+                    if child.tag == "text":
+                        start = float(child.attrib.get("start", 0))
+                        duration = float(child.attrib.get("dur", 2.0))
+                        text = (child.text or "").replace("\n", " ").strip()
+                        import html as html_lib
+                        text = html_lib.unescape(text)
+                        if text:
+                            segments.append({"start": start, "duration": duration, "text": text})
+                            
+                if segments:
+                    title_match = re.search(r'"title":"(.*?)"', html)
+                    return TranscriptResult(
+                        title=title_match.group(1) if title_match else None,
+                        language=chosen_track.get("languageCode", target_lang),
+                        segments=segments,
+                        strategy="free_proxy_scrape"
+                    )
+            except Exception:
+                continue
+                
+        return None
+    except Exception:
+        return None
+
+# ---------------------------------------------------------------------------
+# Strategy 6: Piped API (External Open Source YouTube Frontend)
+# ---------------------------------------------------------------------------
+def _try_piped_api_scrape(video_id: str, language: Optional[str]) -> Optional[TranscriptResult]:
+    try:
+        # Piped instances
+        instances = [
+            "https://pipedapi.kavin.rocks",
+            "https://piped-api.garudalinux.org",
+            "https://api.piped.projectsegfau.lt"
+        ]
+        
+        target_lang = (language or "en").lower()
+        
+        for instance in instances:
+            try:
+                resp = http_client.get(f"{instance}/streams/{video_id}", timeout=10)
+                if not resp.ok:
+                    continue
+                    
+                data = resp.json()
+                subtitles = data.get("subtitles", [])
+                if not subtitles:
+                    return None # No subtitles available on this video
+                    
+                # Pick language
+                chosen_sub = next((s for s in subtitles if s.get("code", "").lower().startswith(target_lang)), None)
+                if not chosen_sub:
+                    chosen_sub = next((s for s in subtitles if s.get("code", "").lower().startswith("en")), subtitles[0])
+                    
+                sub_url = chosen_sub.get("url")
+                if not sub_url:
+                    continue
+                    
+                # Fetch VTT
+                vtt_resp = http_client.get(sub_url, timeout=10)
+                if not vtt_resp.ok:
+                    continue
+                    
+                segments = _parse_vtt_or_srt(vtt_resp.text)
+                if segments:
+                    return TranscriptResult(
+                        title=data.get("title"),
+                        language=chosen_sub.get("code", target_lang),
+                        segments=segments,
+                        strategy="piped_api_scrape"
+                    )
+            except Exception:
+                continue
+                
+        return None
+    except Exception:
+        return None
+
+# ---------------------------------------------------------------------------
+# Strategy 7: curated demo (last resort, only known IDs)
 # ---------------------------------------------------------------------------
 def _try_curated(video_id: str) -> Optional[TranscriptResult]:
     demo = get_demo_transcript(video_id)
@@ -314,63 +557,10 @@ def _try_curated(video_id: str) -> Optional[TranscriptResult]:
         title=demo["title"], language=demo["language"], segments=segments, strategy="curated_demo"
     )
 
-
-def _graceful_fallback(video_id: str, language: Optional[str]) -> TranscriptResult:
-    title = None
-    try:
-        resp = requests.get(
-            "https://noembed.com/embed",
-            params={"url": f"https://www.youtube.com/watch?v={video_id}"},
-            timeout=5,
-        )
-        if resp.ok:
-            title = resp.json().get("title")
-    except Exception:  # noqa: BLE001
-        title = None
-
-    fallback_text = (
-        "Transcript could not be fetched from YouTube right now, so a fallback result was returned. "
-        "This usually happens when YouTube blocks the current IP or captions are unavailable for this video."
-    )
-    return TranscriptResult(
-        title=title or f"YouTube Video {video_id}",
-        language=language or "en",
-        segments=[{"start": 0.0, "duration": 8.0, "text": fallback_text}],
-        strategy="graceful_fallback",
-    )
-
-
 # ---------------------------------------------------------------------------
 # Public entry-point with retry + observability
 # ---------------------------------------------------------------------------
 def fetch_transcript(video_id: str, language: Optional[str] = None) -> TranscriptResult:
-    strategies: List[Tuple[str, callable]] = [
-        ("youtube_transcript_api", lambda: _try_yt_transcript_api(video_id, language)),
-        ("youtube_data_api", lambda: _try_youtube_data_api(video_id, language)),
-        ("yt_dlp", lambda: _try_yt_dlp(video_id, language)),
-        ("curated_demo", lambda: _try_curated(video_id)),
-    ]
-    last_err: Optional[Exception] = None  # noqa: F841
-    for name, fn in strategies:
-        for attempt in range(2):  # one retry per strategy
-            try:
-                result = fn()
-            except Exception as e:  # noqa: BLE001
-                last_err = e
-                result = None
-            if result:
-                youtube_fetch_strategy_total.labels(strategy=result.strategy).inc()
-                log.info("transcript.fetched", strategy=result.strategy, video_id=video_id, segs=len(result.segments))
-                return result
-            time.sleep(0.4 * (attempt + 1))  # tiny exponential backoff
-        log.info("strategy.exhausted", strategy=name, video_id=video_id)
-    log.warning(
-        "transcript.fallback_returned",
-        video_id=video_id,
-        reason="all_strategies_failed",
-        proxy=bool(YT_PROXY_URL),
-        api_key=bool(YOUTUBE_API_KEY),
-    )
-    result = _graceful_fallback(video_id, language)
-    youtube_fetch_strategy_total.labels(strategy=result.strategy).inc()
-    return result
+    # User requested to ONLY use the video-extracting AI option (Whisper) 
+    # to ensure not a single word is missed, bypassing YouTube's native flawed captions.
+    raise TranscriptError("Bypassing direct text extraction to force high-accuracy AI processing.")

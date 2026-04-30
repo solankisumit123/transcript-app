@@ -24,7 +24,8 @@ from typing import Callable, Dict, List, Optional
 from observability import log
 from transcript_service import extract_video_id_safe
 
-DOWNLOAD_DIR = Path(os.environ.get("DOWNLOAD_DIR", "/tmp/ytdownloads"))
+import tempfile
+DOWNLOAD_DIR = Path(os.environ.get("DOWNLOAD_DIR", str(Path(tempfile.gettempdir()) / "ytdownloads")))
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -56,6 +57,9 @@ def download_youtube_audio(
         "noplaylist": True,
         "no_warnings": True,
     }
+    yt_cookies = os.environ.get("YT_COOKIES_FILE", "").strip()
+    if yt_cookies and os.path.exists(yt_cookies):
+        ydl_opts["cookiefile"] = yt_cookies
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -154,8 +158,8 @@ def transcribe_audio(
     segments_iter, info = model.transcribe(
         audio_path,
         language=language,
-        beam_size=1,
-        vad_filter=True,
+        beam_size=5,
+        vad_filter=False,
         word_timestamps=True,
     )
     duration = info.duration or 0.0

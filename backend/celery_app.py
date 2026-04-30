@@ -11,7 +11,6 @@ if _packages_dir.exists() and str(_packages_dir) not in sys.path:
     sys.path.insert(0, str(_packages_dir))
 
 import os
-from pathlib import Path
 from dotenv import load_dotenv
 from celery import Celery
 
@@ -38,7 +37,7 @@ celery = Celery(
 )
 
 celery.conf.update(
-    task_always_eager=False,
+    task_always_eager=not redis_available,  # Run inline if Redis is down
     broker_connection_retry_on_startup=False, # Fail fast if Redis is down
     worker_prefetch_multiplier=1,
     result_expires=3600,
