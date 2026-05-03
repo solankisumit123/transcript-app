@@ -77,9 +77,13 @@ if "127.0.0.1" in mongo_url or "localhost" in mongo_url:
     mongomock.SERVER_VERSION = "7.0.0"
     mongo_client = mongomock_motor.AsyncMongoMockClient()
 else:
-    mongo_client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=2000)
-    mongo_client.admin.command("ping")
-db = mongo_client[os.environ.get("DB_NAME", "yt_transcript_dev")]
+    # Atlas / remote MongoDB — do NOT call ping() here (blocks async loop at import time)
+    mongo_client = AsyncIOMotorClient(
+        mongo_url,
+        serverSelectionTimeoutMS=5000,
+        tlsAllowInvalidCertificates=False,
+    )
+db = mongo_client[os.environ.get("DB_NAME", "yt_transcript_prod")]
 
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 _default_dl_dir = Path(tempfile.gettempdir()) / "ytdownloads"
@@ -560,8 +564,73 @@ async def media_transcribe_url(
 
 
 # ---------------------------------------------------------------------------
-# Jobs (real)
+# Full AI Pipeline (8-Step) — POST /api/pipeline/process
 # ---------------------------------------------------------------------------
+class PipelineRequest(BaseModel):
+    url: str
+    language: Optional[str] = None
+
+
+@api_router.post("/pipeline/process")
+async def pipeline_process(req: PipelineRequest):
+    """
+    Full 8-step AI media processing pipeline:
+      Step 1 — Video Input Validation + Platform Detection
+      Step 2 — Audio Extraction (WAV 16kHz mono)
+      Step 3 — Speech Detection & VAD Chunking
+      Step 4 — Speech-to-Text (faster-whisper, auto language detect)
+      Step 5 — Speaker Identification (Speaker 1, Speaker 2…)
+      Step 6 — Timestamp Alignment
+      Step 7 — Text Cleaning (filler removal, punctuation)
+      Step 8 — Structured Output Generation
+    """
+    if not req.url:
+        raise HTTPException(status_code=400, detail="url is required")
+
+    job = await _create_job_doc(
+        job_type="pipeline",
+        input_url=req.url,
+        options={"language": req.language},
+    )
+
+    async def _run_pipeline():
+        from pipeline_service import run_full_pipeline
+
+        def report(p: int, msg: str):
+            publish_progress(job.id, status="processing", progress=p, message=msg)
+
+        try:
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: run_full_pipeline(req.url, req.language, on_progress=report),
+            )
+            result["id"] = job.id
+            await db.transcriptions.update_one({"id": job.id}, {"$set": result}, upsert=True)
+            result.pop("_id", None)
+            publish_progress(job.id, status="done", progress=100, message="Pipeline complete", data=result)
+            await db.jobs.update_one(
+                {"id": job.id},
+                {"$set": {"status": "done", "progress": 100, "result_id": job.id, "result_kind": "transcription"}},
+            )
+        except Exception as e:
+            err = str(e)[:300]
+            log.error("pipeline.failed", job_id=job.id, error=err)
+            publish_progress(job.id, status="failed", progress=100, message=err)
+            await db.jobs.update_one(
+                {"id": job.id},
+                {"$set": {"status": "failed", "progress": 100, "error": err}},
+            )
+
+    asyncio.create_task(_run_pipeline())
+    return {
+        "job_id": job.id,
+        "status": "queued",
+        "message": "8-step AI pipeline started",
+        "stream": f"/api/ws/jobs/{job.id}",
+    }
+
+
+
 @api_router.post("/jobs", response_model=Job)
 async def create_job(req: JobCreate):
     job = await _create_job_doc(job_type=req.job_type, input_url=req.input_url, options=req.options)

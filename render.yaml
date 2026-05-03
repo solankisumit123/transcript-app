@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: transcript-backend
+    env: docker
+    region: oregon
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: MONGO_URL
+        value: mongodb+srv://sumo:Sumo%407874@cluster0.z6h7dtn.mongodb.net/
+      - key: DB_NAME
+        value: yt_transcript_prod
+      - key: REDIS_URL
+        value: rediss://default:AZ-5AAIgcDE5YjNkMTQzMmYyMmU0OTE3YjM1Zjg0MTRkYjE5NTkwZQ@better-antelope-40889.upstash.io:6379
+      - key: WHISPER_MODEL
+        value: tiny
+      - key: DOWNLOAD_DIR
+        value: /tmp/ytdownloads
+      - key: CORS_ORIGINS
+        value: https://your-frontend.onrender.com,http://localhost:3000
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: EMERGENT_LLM_KEY
+        sync: false

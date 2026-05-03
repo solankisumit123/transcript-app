@@ -20,10 +20,15 @@ import redis
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 
+# Upstash requires TLS — pass ssl_cert_reqs for rediss:// URLs
+_redis_kwargs = {}
+if REDIS_URL.startswith("rediss://"):
+    _redis_kwargs["ssl_cert_reqs"] = None
+
 # Check if Redis is available
 redis_available = False
 try:
-    _client = redis.Redis.from_url(REDIS_URL, socket_connect_timeout=2)
+    _client = redis.Redis.from_url(REDIS_URL, socket_connect_timeout=3, **_redis_kwargs)
     _client.ping()
     redis_available = True
 except (redis.ConnectionError, Exception):
@@ -37,8 +42,10 @@ celery = Celery(
 )
 
 celery.conf.update(
-    task_always_eager=not redis_available,  # Run inline if Redis is down
-    broker_connection_retry_on_startup=False, # Fail fast if Redis is down
+    task_always_eager=not redis_available,
+    broker_connection_retry_on_startup=False,
     worker_prefetch_multiplier=1,
     result_expires=3600,
+    broker_use_ssl={"ssl_cert_reqs": None} if REDIS_URL.startswith("rediss://") else None,
+    redis_backend_use_ssl={"ssl_cert_reqs": None} if REDIS_URL.startswith("rediss://") else None,
 )

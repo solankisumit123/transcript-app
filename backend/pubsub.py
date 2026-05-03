@@ -14,7 +14,12 @@ import redis
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 try:
-    _client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+    # ssl_cert_reqs=None needed for Upstash TLS (rediss://) on cloud servers
+    _client = redis.Redis.from_url(
+        REDIS_URL,
+        decode_responses=True,
+        ssl_cert_reqs=None if REDIS_URL.startswith("rediss://") else None,
+    )
     _client.ping()
 except (redis.RedisError, Exception):
     import fakeredis

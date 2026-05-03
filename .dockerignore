@@ -1,9 +1,62 @@
-backend/packages/
-node_modules/
+# Git
 .git/
+.gitignore
+
+# Python cache
 __pycache__/
 *.pyc
-.env
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
 .venv/
 venv/
 env/
+packages/
+backend/packages/
+
+# Environment files (NEVER commit these)
+.env
+.env.*
+*.env
+
+# Local downloads & temp files
+backend/downloads/
+backend/tests/
+/tests/
+
+# Node / Frontend dev files
+node_modules/
+frontend/node_modules/
+frontend/.env
+frontend/src/
+frontend/public/
+frontend/craco.config.js
+frontend/tailwind.config.js
+frontend/postcss.config.js
+frontend/jsconfig.json
+frontend/components.json
+frontend/README.md
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+
+# Test reports
+test_reports/
+test_result.md
+memory/
+
+# Large model files (downloaded at runtime)
+*.bin
+*.pt
+*.safetensors

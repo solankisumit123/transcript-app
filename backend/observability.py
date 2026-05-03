@@ -63,6 +63,6 @@ active_websocket_connections = Gauge(
 )
 youtube_fetch_strategy_total = Counter(
     "youtube_fetch_strategy_total",
-    "Counts by which transcript strategy succeeded",
-    ["strategy"],
+    "Counts by which transcript strategy succeeded or failed",
+    ["strategy", "status"],
 )
