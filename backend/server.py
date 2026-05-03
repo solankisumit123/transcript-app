@@ -406,23 +406,22 @@ async def extract_transcript(req: ExtractRequest, request: Request):
                 _pending_fetches.pop(fetch_key, None)
             
     except TranscriptError as e:
-        # User wants AI fallback but without the "Generating using AI" text
-        log.warning("transcript.text_failed_fallback_to_ai", video_id=video_id, detail=str(e))
-        job = await _create_job_doc(job_type="transcribe", input_url=req.url, options={"language": req.language})
-        from tasks import task_transcribe_url
-        import asyncio
-        loop = asyncio.get_event_loop()
-        # Run in executor to prevent freezing the server if Redis is missing and task runs eagerly
-        loop.run_in_executor(None, task_transcribe_url.delay, job.id, req.url, req.language)
-        return JSONResponse(
-            status_code=202,
-            content={
-                "job_id": job.id, 
-                "status": "ai_generation", 
-                "message": "Extracting Video Transcript...",
-                "stream": f"/api/ws/jobs/{job.id}"
-            },
-        )
+        detail = str(e)
+        log.warning("transcript.all_strategies_failed", video_id=video_id, detail=detail)
+
+        # Check if video has no captions or if YouTube is blocking
+        user_msg = "No captions found for this video."
+        if "bot" in detail.lower() or "sign in" in detail.lower() or "blocked" in detail.lower():
+            user_msg = (
+                "YouTube is blocking caption access from this server. "
+                "Try a video that has community-uploaded or auto-generated captions enabled."
+            )
+        elif "private" in detail.lower() or "unavailable" in detail.lower():
+            user_msg = "This video is private or unavailable."
+        elif "disabled" in detail.lower():
+            user_msg = "Captions are disabled for this video."
+
+        raise HTTPException(status_code=422, detail=user_msg)
 
     # 4. Success: process and cache result
     segments: List[TranscriptSegment] = []

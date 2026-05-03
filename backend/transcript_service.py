@@ -113,47 +113,61 @@ def _try_yt_transcript_api(video_id: str, language: Optional[str]) -> Optional[T
     except ImportError:
         return None
 
-    kwargs = {}
-    if YT_PROXY_URL:
-        kwargs["proxies"] = {"http": YT_PROXY_URL, "https": YT_PROXY_URL}
+    target_lang = (language or "en").lower()
     _cookies = _get_cookies_file()
+
+    # Build list of kwargs combos to try (cookies first, then no-auth)
+    attempts = []
     if _cookies and os.path.exists(_cookies):
-        kwargs["cookies"] = _cookies
-
-    try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id, **kwargs)
-        
-        target_lang = (language or "en").lower()
-        # Find transcript prioritizing requested language, then english
+        # Try with cookies kwarg (v0.6+)
+        attempts.append({"cookies": _cookies})
+        # Also load cookies into session for http_client
         try:
-            transcript = transcript_list.find_transcript([target_lang, "en"])
+            import http.cookiejar
+            cj = http.cookiejar.MozillaCookieJar(_cookies)
+            cj.load(ignore_discard=True, ignore_expires=True)
+            http_client.cookies.update(cj)
         except Exception:
-            # If neither found, just grab the first available
-            transcript = list(transcript_list)[0]
+            pass
+    # Always try without cookies too (some videos work without auth)
+    attempts.append({})
 
-        fetched = transcript.fetch()
-        
-        segments = [
-            {
-                "start": float(s["start"]),
-                "duration": float(s["duration"]),
-                "text": (s["text"] or "").replace("\n", " ").strip(),
-            }
-            for s in fetched
-        ]
-        
-        if not segments:
-            return None
-            
-        return TranscriptResult(
-            title=None,
-            language=transcript.language_code,
-            segments=segments,
-            strategy="youtube_transcript_api" + ("_proxy" if YT_PROXY_URL else "") + ("_cookies" if "cookies" in kwargs else ""),
-        )
-    except Exception as e:
-        log.info("strategy.yt_api.failed", err=str(e)[:200], has_cookies="cookies" in kwargs)
-        return None
+    if YT_PROXY_URL:
+        attempts = [{**a, "proxies": {"http": YT_PROXY_URL, "https": YT_PROXY_URL}} for a in attempts]
+
+    for kwargs in attempts:
+        try:
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id, **kwargs)
+            try:
+                transcript = transcript_list.find_transcript([target_lang, "en"])
+            except Exception:
+                transcript = list(transcript_list)[0]
+
+            fetched = transcript.fetch()
+            segments = [
+                {
+                    "start": float(s["start"]),
+                    "duration": float(s["duration"]),
+                    "text": (s["text"] or "").replace("\n", " ").strip(),
+                }
+                for s in fetched
+            ]
+            if not segments:
+                continue
+
+            used_cookies = "cookies" in kwargs
+            return TranscriptResult(
+                title=None,
+                language=transcript.language_code,
+                segments=segments,
+                strategy="youtube_transcript_api" + ("_proxy" if YT_PROXY_URL else "") + ("_cookies" if used_cookies else ""),
+            )
+        except Exception as e:
+            log.info("strategy.yt_api.attempt_failed", err=str(e)[:200], kwargs_keys=list(kwargs.keys()))
+            continue
+
+    return None
+
 
 
 # ---------------------------------------------------------------------------
