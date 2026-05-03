@@ -23,5 +23,7 @@ services:
         sync: false
       - key: EMERGENT_LLM_KEY
         sync: false
+      - key: YT_COOKIES_FILE
+        value: /app/backend/youtube_cookies.txt
       - key: YT_COOKIES_BASE64
-        sync: false   # Paste base64-encoded cookies.txt here (see instructions below)
+        sync: false
