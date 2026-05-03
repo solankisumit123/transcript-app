@@ -90,6 +90,22 @@ _default_dl_dir = Path(tempfile.gettempdir()) / "ytdownloads"
 DOWNLOAD_DIR = Path(os.environ.get("DOWNLOAD_DIR", str(_default_dl_dir)))
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+# ---------------------------------------------------------------------------
+# YouTube Cookies — load from Base64 env var (for cloud deployments like Render)
+# Set YT_COOKIES_BASE64 = base64-encoded content of your cookies.txt file
+# ---------------------------------------------------------------------------
+_yt_cookies_b64 = os.environ.get("YT_COOKIES_BASE64", "").strip()
+if _yt_cookies_b64 and not os.environ.get("YT_COOKIES_FILE"):
+    try:
+        import base64
+        _cookies_dir = Path(tempfile.gettempdir())
+        _cookies_path = _cookies_dir / "yt_cookies.txt"
+        _cookies_path.write_bytes(base64.b64decode(_yt_cookies_b64))
+        os.environ["YT_COOKIES_FILE"] = str(_cookies_path)
+        log.info("yt_cookies.loaded_from_base64", path=str(_cookies_path))
+    except Exception as _e:
+        log.warning("yt_cookies.base64_decode_failed", error=str(_e))
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
