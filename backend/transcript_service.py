@@ -26,22 +26,16 @@ from demo_transcripts import get_demo_transcript
 
 YT_PROXY_URL = os.environ.get("YT_PROXY_URL", "").strip()
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "").strip()
-YT_COOKIES_FILE = os.environ.get("YT_COOKIES_FILE", "").strip()
+
+def _get_cookies_file() -> str:
+    """Read YT_COOKIES_FILE dynamically so server.py base64 loader is always picked up."""
+    return os.environ.get("YT_COOKIES_FILE", "").strip()
 
 # Global connection-pooled session for high traffic performance
 http_client = requests.Session()
 adapter = requests.adapters.HTTPAdapter(pool_connections=100, pool_maxsize=100)
 http_client.mount("http://", adapter)
 http_client.mount("https://", adapter)
-
-if YT_COOKIES_FILE and os.path.exists(YT_COOKIES_FILE):
-    import http.cookiejar
-    try:
-        cj = http.cookiejar.MozillaCookieJar(YT_COOKIES_FILE)
-        cj.load(ignore_discard=True, ignore_expires=True)
-        http_client.cookies.update(cj)
-    except Exception:
-        pass
 
 
 # ---------------------------------------------------------------------------
@@ -122,8 +116,9 @@ def _try_yt_transcript_api(video_id: str, language: Optional[str]) -> Optional[T
     kwargs = {}
     if YT_PROXY_URL:
         kwargs["proxies"] = {"http": YT_PROXY_URL, "https": YT_PROXY_URL}
-    if YT_COOKIES_FILE and os.path.exists(YT_COOKIES_FILE):
-        kwargs["cookies"] = YT_COOKIES_FILE
+    _cookies = _get_cookies_file()
+    if _cookies and os.path.exists(_cookies):
+        kwargs["cookies"] = _cookies
 
     try:
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id, **kwargs)
@@ -286,8 +281,9 @@ def _try_yt_dlp(video_id: str, language: Optional[str]) -> Optional[TranscriptRe
     }
     if YT_PROXY_URL:
         ydl_opts["proxy"] = YT_PROXY_URL
-    if YT_COOKIES_FILE and os.path.exists(YT_COOKIES_FILE):
-        ydl_opts["cookiefile"] = YT_COOKIES_FILE
+    _cookies = _get_cookies_file()
+    if _cookies and os.path.exists(_cookies):
+        ydl_opts["cookiefile"] = _cookies
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -320,7 +316,7 @@ def _try_yt_dlp(video_id: str, language: Optional[str]) -> Optional[TranscriptRe
             title=title,
             language=chosen_lang or target_lang,
             segments=segments,
-            strategy="yt_dlp" + ("_proxy" if YT_PROXY_URL else "") + ("_cookies" if YT_COOKIES_FILE and os.path.exists(YT_COOKIES_FILE) else ""),
+            strategy="yt_dlp" + ("_proxy" if YT_PROXY_URL else "") + ("_cookies" if _get_cookies_file() and os.path.exists(_get_cookies_file()) else ""),
         )
     except Exception as e:  # noqa: BLE001
         log.info("strategy.yt_dlp.failed", err=str(e)[:200])
